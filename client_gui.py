@@ -1,23 +1,25 @@
-# 导入所需的库
 import ftplib
 import os
 import tkinter as tk
-from tkinter import ttk, filedialog, simpledialog, messagebox
+from tkinter import ttk, messagebox
 import threading
-import re
 
 
 class FtpClientGUI(tk.Tk):
+    """
+    一个支持文件和文件夹传输的图形化FTP客户端。
+    """
+
     def __init__(self):
         super().__init__()
-        self.title("FTP 客户端")
+        self.title("FTP 客户端 (支持文件夹传输)")
         self.geometry("900x600")
 
         self.ftp = None
         self.current_local_path = os.getcwd()
 
-        # --- 创建界面组件 ---
         self._create_widgets()
+        self.protocol("WM_DELETE_WINDOW", self.on_closing)
 
     def _create_widgets(self):
         # --- 连接信息框架 ---
@@ -50,6 +52,15 @@ class FtpClientGUI(tk.Tk):
         files_frame = ttk.Frame(self)
         files_frame.pack(expand=True, fill=tk.BOTH, padx=10)
 
+        # 操作按钮框架
+        actions_frame = ttk.Frame(files_frame)
+        actions_frame.pack(side=tk.LEFT, fill=tk.Y, padx=5, anchor='n', pady=20)
+
+        ttk.Button(actions_frame, text="上传 >>", command=self.upload_item).pack(pady=10)
+        ttk.Button(actions_frame, text="<< 下载", command=self.download_item).pack(pady=10)
+        ttk.Button(actions_frame, text="刷新本地", command=self.refresh_local_files).pack(pady=30)
+        ttk.Button(actions_frame, text="刷新远程", command=self.refresh_remote_files).pack(pady=10)
+
         # 本地文件列表
         local_frame = ttk.LabelFrame(files_frame, text="本地文件")
         local_frame.pack(side=tk.LEFT, expand=True, fill=tk.BOTH, padx=5, pady=5)
@@ -62,7 +73,6 @@ class FtpClientGUI(tk.Tk):
         self.local_tree.column("size", width=100, anchor='e')
         self.local_tree.column("type", width=100, anchor='center')
         self.local_tree.pack(expand=True, fill=tk.BOTH)
-        self.refresh_local_files()
 
         # 远程文件列表
         remote_frame = ttk.LabelFrame(files_frame, text="远程服务器文件")
@@ -77,25 +87,16 @@ class FtpClientGUI(tk.Tk):
         self.remote_tree.column("type", width=100, anchor='center')
         self.remote_tree.pack(expand=True, fill=tk.BOTH)
 
-        # --- 操作按钮框架 ---
-        actions_frame = ttk.Frame(files_frame)
-        actions_frame.pack(side=tk.LEFT, fill=tk.Y, padx=5)
-
-        ttk.Button(actions_frame, text="上传 >>", command=self.upload_file).pack(pady=10)
-        ttk.Button(actions_frame, text="<< 下载", command=self.download_file).pack(pady=10)
-        ttk.Button(actions_frame, text="刷新本地", command=self.refresh_local_files).pack(pady=10)
-        ttk.Button(actions_frame, text="刷新远程", command=self.refresh_remote_files).pack(pady=10)
-
         # --- 日志信息框架 ---
         log_frame = ttk.LabelFrame(self, text="状态日志", padding=(10, 5))
         log_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=5)
         self.log_text = tk.Text(log_frame, height=5, state='disabled')
-        self.log_text.pack(expand=True, fill=tk.X)
+        self.log_text.pack(expand=True, fill=tk.BOTH)
 
-    # --- 核心功能方法 ---
+        self.refresh_local_files()
 
     def log(self, message):
-        """向日志文本框中添加一条消息"""
+        """向日志窗口打印消息"""
         if not message.endswith('\n'):
             message += '\n'
         self.log_text.config(state='normal')
@@ -104,32 +105,38 @@ class FtpClientGUI(tk.Tk):
         self.log_text.config(state='disabled')
 
     def toggle_connection(self):
+        """切换连接/断开状态"""
         if self.ftp:
             self.disconnect()
         else:
-            self.connect()
+            # 在新线程中执行连接，避免界面卡顿
+            threading.Thread(target=self.connect, daemon=True).start()
 
     def connect(self):
+        """连接到FTP服务器"""
         host = self.host_var.get()
         port = int(self.port_var.get())
         user = self.user_var.get()
         password = self.pass_var.get()
 
         try:
-            self.log(f"正在连接到 {host}:{port}...")
-            self.ftp = ftplib.FTP()
-            self.ftp.connect(host, port, timeout=10)
-            self.ftp.login(user, password)
-            self.ftp.encoding = "utf-8"
-            self.log("连接成功！" + self.ftp.getwelcome())
-            self.connect_btn.config(text="断开")
-            self.refresh_remote_files()
+            self.after(0, lambda: self.log(f"正在连接到 {host}:{port}..."))
+            ftp_instance = ftplib.FTP()
+            ftp_instance.connect(host, port, timeout=10)
+            ftp_instance.login(user, password)
+            self.ftp = ftp_instance
+
+            self.after(0, lambda: self.log("连接成功！" + self.ftp.getwelcome()))
+            self.after(0, lambda: self.connect_btn.config(text="断开"))
+            self.after(0, self.refresh_remote_files)
+
         except ftplib.all_errors as e:
-            self.log(f"连接失败: {e}")
-            messagebox.showerror("连接错误", f"无法连接到服务器: {e}")
             self.ftp = None
+            self.after(0, lambda: self.log(f"连接失败: {e}"))
+            self.after(0, lambda: messagebox.showerror("连接错误", f"无法连接到服务器: {e}"))
 
     def disconnect(self):
+        """断开与FTP服务器的连接"""
         if self.ftp:
             try:
                 self.ftp.quit()
@@ -138,10 +145,12 @@ class FtpClientGUI(tk.Tk):
                 self.log(f"断开时出错: {e}")
         self.ftp = None
         self.connect_btn.config(text="连接")
+        # 清空远程文件列表
         for item in self.remote_tree.get_children():
             self.remote_tree.delete(item)
 
     def refresh_local_files(self):
+        """刷新本地文件列表"""
         for item in self.local_tree.get_children():
             self.local_tree.delete(item)
         for item in os.listdir(self.current_local_path):
@@ -151,109 +160,148 @@ class FtpClientGUI(tk.Tk):
                 item_type = "文件夹" if os.path.isdir(full_path) else "文件"
                 self.local_tree.insert("", "end", values=(item, f"{size} B", item_type))
             except OSError:
-                pass
+                pass  # 忽略无法访问的文件
 
     def refresh_remote_files(self):
+        """刷新远程文件列表"""
         if not self.ftp:
             self.log("刷新远程列表失败：未连接。")
             return
+
         for item in self.remote_tree.get_children():
             self.remote_tree.delete(item)
+
         try:
-            # 修正: 使用兼容性更好的 'LIST' 命令代替 'MLSD'
             lines = []
             self.ftp.retrlines('LIST', lines.append)
             for line in lines:
-                # 解析 LIST 命令返回的复杂字符串
                 parts = line.split()
-                if len(parts) < 9:
-                    continue
-
-                permissions = parts[0]
-                size = parts[4]
-                # 文件名可能包含空格，所以从第8个元素开始拼接
-                filename = " ".join(parts[8:])
-
+                if len(parts) < 9: continue
+                permissions, size, filename = parts[0], parts[4], " ".join(parts[8:])
                 item_type = "文件夹" if permissions.startswith('d') else "文件"
-                size_display = f"{size} B"
-
-                self.remote_tree.insert("", "end", values=(filename.strip(), size_display, item_type))
+                self.remote_tree.insert("", "end", values=(filename.strip(), f"{size} B", item_type))
             self.log("远程文件列表已刷新。")
         except ftplib.all_errors as e:
             self.log(f"获取远程列表失败: {e}")
             messagebox.showerror("错误", f"无法获取远程文件列表: {e}")
 
-    def upload_file(self):
+    def upload_item(self):
+        """上传选定的文件或文件夹"""
         selected_item = self.local_tree.focus()
         if not selected_item:
-            messagebox.showwarning("提示", "请先在本地文件列表中选择一个文件。")
+            messagebox.showwarning("提示", "请先在本地文件列表中选择一个文件或文件夹。")
             return
 
-        file_info = self.local_tree.item(selected_item)['values']
-        filename = str(file_info[0])
-        file_type = str(file_info[2])
-        if file_type == "文件夹":
-            messagebox.showwarning("提示", "暂不支持上传整个文件夹。")
-            return
+        info = self.local_tree.item(selected_item)['values']
+        name, item_type = str(info[0]), str(info[2])
+        local_path = os.path.join(self.current_local_path, name)
 
-        local_path = os.path.join(self.current_local_path, filename)
-        threading.Thread(target=self._upload_thread, args=(local_path, filename), daemon=True).start()
+        if item_type == "文件":
+            threading.Thread(target=self._upload_file_thread, args=(local_path, name), daemon=True).start()
+        else:  # 是文件夹
+            threading.Thread(target=self._upload_folder_thread, args=(local_path, name), daemon=True).start()
 
-    def _upload_thread(self, local_path, remote_filename):
-        if not self.ftp:
-            self.log("上传错误：未连接。")
-            messagebox.showerror("错误", "未连接到FTP服务器。")
-            return
+    def _upload_file_thread(self, local_path, remote_filename):
+        if not self.ftp: self.log("上传错误：未连接。"); return
         try:
-            self.log(f"开始上传: {remote_filename}...")
+            self.after(0, lambda: self.log(f"开始上传文件: {remote_filename}..."))
             with open(local_path, 'rb') as f:
                 self.ftp.storbinary(f'STOR {remote_filename}', f)
-            self.log(f"上传成功: {remote_filename}")
-            # 使用 after 确保UI更新在主线程中执行
+            self.after(0, lambda: self.log(f"上传文件成功: {remote_filename}"))
             self.after(0, self.refresh_remote_files)
         except ftplib.all_errors as e:
-            self.log(f"上传失败: {e}")
-            messagebox.showerror("上传错误", f"上传文件失败: {e}")
+            self.after(0, lambda: self.log(f"上传文件失败: {e}"))
+            self.after(0, lambda: messagebox.showerror("上传错误", f"上传文件失败: {e}"))
 
-    def download_file(self):
+    def _upload_folder_thread(self, local_path, remote_foldername):
+        if not self.ftp: self.log("上传错误：未连接。"); return
+        try:
+            self.after(0, lambda: self.log(f"开始上传文件夹: {remote_foldername}..."))
+            self.ftp.mkd(remote_foldername)
+            for root, _, files in os.walk(local_path):
+                remote_path = os.path.join(remote_foldername, os.path.relpath(root, local_path)).replace("\\", "/")
+                if remote_path != remote_foldername:  # 避免重复创建根目录
+                    try:
+                        self.ftp.mkd(remote_path)
+                    except ftplib.all_errors:
+                        pass  # 文件夹可能已存在
+
+                for f in files:
+                    local_file_path = os.path.join(root, f)
+                    remote_file_path = os.path.join(remote_path, f).replace("\\", "/")
+                    with open(local_file_path, 'rb') as file_obj:
+                        self.ftp.storbinary(f'STOR {remote_file_path}', file_obj)
+            self.after(0, lambda: self.log(f"上传文件夹成功: {remote_foldername}"))
+            self.after(0, self.refresh_remote_files)
+        except ftplib.all_errors as e:
+            self.after(0, lambda: self.log(f"上传文件夹失败: {e}"))
+            self.after(0, lambda: messagebox.showerror("上传错误", f"上传文件夹失败: {e}"))
+
+    def download_item(self):
+        """下载选定的文件或文件夹"""
         selected_item = self.remote_tree.focus()
         if not selected_item:
-            messagebox.showwarning("提示", "请先在远程服务器列表中选择一个文件。")
+            messagebox.showwarning("提示", "请先在远程服务器列表中选择一个文件或文件夹。")
             return
 
-        file_info = self.remote_tree.item(selected_item)['values']
-        filename = str(file_info[0])
-        file_type = str(file_info[2])
-        if file_type == "文件夹":
-            messagebox.showwarning("提示", "暂不支持下载整个文件夹。")
-            return
+        info = self.remote_tree.item(selected_item)['values']
+        name, item_type = str(info[0]), str(info[2])
+        local_path = os.path.join(self.current_local_path, name)
 
-        local_path = os.path.join(self.current_local_path, filename)
-        threading.Thread(target=self._download_thread, args=(filename, local_path), daemon=True).start()
+        if item_type == "文件":
+            threading.Thread(target=self._download_file_thread, args=(name, local_path), daemon=True).start()
+        else:  # 是文件夹
+            threading.Thread(target=self._download_folder_thread, args=(name, local_path), daemon=True).start()
 
-    def _download_thread(self, remote_filename, local_path):
-        if not self.ftp:
-            self.log("下载错误：未连接。")
-            messagebox.showerror("错误", "未连接到FTP服务器。")
-            return
+    def _download_file_thread(self, remote_filename, local_path):
+        if not self.ftp: self.log("下载错误：未连接。"); return
         try:
-            self.log(f"开始下载: {remote_filename}...")
+            self.after(0, lambda: self.log(f"开始下载文件: {remote_filename}..."))
             with open(local_path, 'wb') as f:
                 self.ftp.retrbinary(f'RETR {remote_filename}', f.write)
-            self.log(f"下载成功: {remote_filename}")
+            self.after(0, lambda: self.log(f"下载文件成功: {remote_filename}"))
             self.after(0, self.refresh_local_files)
         except ftplib.all_errors as e:
-            self.log(f"下载失败: {e}")
-            messagebox.showerror("下载错误", f"下载文件失败: {e}")
+            self.after(0, lambda: self.log(f"下载文件失败: {e}"))
+            self.after(0, lambda: messagebox.showerror("下载错误", f"下载文件失败: {e}"))
+
+    def _download_folder_thread(self, remote_foldername, local_path):
+        if not self.ftp: self.log("下载错误：未连接。"); return
+        try:
+            self.after(0, lambda: self.log(f"开始下载文件夹: {remote_foldername}..."))
+            os.makedirs(local_path, exist_ok=True)
+            self._recursive_download(remote_foldername, local_path)
+            self.after(0, lambda: self.log(f"下载文件夹成功: {remote_foldername}"))
+            self.after(0, self.refresh_local_files)
+        except ftplib.all_errors as e:
+            self.after(0, lambda: self.log(f"下载文件夹失败: {e}"))
+            self.after(0, lambda: messagebox.showerror("下载错误", f"下载文件夹失败: {e}"))
+
+    def _recursive_download(self, remote_path, local_path):
+        """递归地下载文件夹内容"""
+        # 使用 MLSD 获取更详细的列表信息
+        for name, facts in self.ftp.mlsd(remote_path):
+            if name in ('.', '..'): continue
+
+            local_item_path = os.path.join(local_path, name)
+            remote_item_path = os.path.join(remote_path, name).replace("\\", "/")
+
+            if facts['type'] == 'dir':
+                os.makedirs(local_item_path, exist_ok=True)
+                self._recursive_download(remote_item_path, local_item_path)
+            elif facts['type'] == 'file':
+                with open(local_item_path, 'wb') as f:
+                    self.ftp.retrbinary(f'RETR {remote_item_path}', f.write)
 
     def on_closing(self):
+        """关闭窗口时的处理"""
         self.disconnect()
         self.destroy()
 
 
 if __name__ == "__main__":
     app = FtpClientGUI()
-    app.protocol("WM_DELETE_WINDOW", app.on_closing)
     app.mainloop()
+
 
 
