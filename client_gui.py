@@ -124,6 +124,24 @@ class FtpClientGUI(tk.Tk):
             ftp_instance = ftplib.FTP()
             ftp_instance.connect(host, port, timeout=10)
             ftp_instance.login(user, password)
+
+            # --- 这是新的、完整的UTF-8解决方案 ---
+
+            # 1. 显式地告诉服务器：请将此连接的控制编码切换到 UTF-8
+            #    (这需要服务器端设置了 handler.encoding = "utf-8" 才能成功)
+            try:
+                ftp_instance.sendcmd('OPTS UTF8 ON')
+                self.after(0, lambda: self.log("UTF-8 模式已成功开启。"))
+            except ftplib.all_errors as e:
+                self.after(0, lambda: self.log(f"警告：服务器可能不支持 UTF-8。 {e}"))
+
+            # 2. 显式地告诉 ftplib 库：在 *发送*(Encode) 和 *接收*(Decode) 时
+            #    都必须使用 'utf-8' 编码。
+            #    这将修复 'latin-1' 编码错误。
+            ftp_instance.encoding = 'utf-8'
+
+            # --- 解决方案结束 ---
+
             self.ftp = ftp_instance
 
             self.after(0, lambda: self.log("连接成功！" + self.ftp.getwelcome()))
@@ -200,7 +218,7 @@ class FtpClientGUI(tk.Tk):
             threading.Thread(target=self._upload_file_thread, args=(local_path, name), daemon=True).start()
         else:  # 是文件夹
             threading.Thread(target=self._upload_folder_thread, args=(local_path, name), daemon=True).start()
-
+#应用层
     def _upload_file_thread(self, local_path, remote_filename):
         if not self.ftp: self.log("上传错误：未连接。"); return
         try:
@@ -279,13 +297,13 @@ class FtpClientGUI(tk.Tk):
 
     def _recursive_download(self, remote_path, local_path):
         """递归地下载文件夹内容"""
-        # 使用 MLSD 获取更详细的列表信息
+        # 使用 MLSD 获取更详细的列表信息，遍历当前远程文件夹(remote_path)里的所有内容
         for name, facts in self.ftp.mlsd(remote_path):
             if name in ('.', '..'): continue
 
             local_item_path = os.path.join(local_path, name)
             remote_item_path = os.path.join(remote_path, name).replace("\\", "/")
-
+            # 2. 判断这个东西是文件夹(dir)还是文件(file)
             if facts['type'] == 'dir':
                 os.makedirs(local_item_path, exist_ok=True)
                 self._recursive_download(remote_item_path, local_item_path)

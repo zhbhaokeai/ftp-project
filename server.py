@@ -31,9 +31,12 @@ def main():
     # 修正: 为匿名用户也添加明确的、完整的权限
     authorizer.add_anonymous(anonymous_home_dir, perm='elradfmwMT')
 
-    # --- 2. 配置服务器处理器 ---
+    # --- 2. 配置服务器处理器/雇佣一个 "仓库管理员" (Handler) ---
     handler = FTPHandler
     handler.authorizer = authorizer
+
+    # 显式告诉服务器必须使用 UTF-8 编码
+    handler.encoding = "utf-8"  # <--- 必须保留这一行
 
     # 设置欢迎语
     handler.banner = "FTP Server is ready."
@@ -41,7 +44,7 @@ def main():
     # 可选: 开启被动模式(通常需要)
     # handler.passive_ports = range(60000, 65535)
 
-    # --- 3. 启动服务器 ---
+    # --- 3. 启动服务器 ---/建造 "仓库"
     address = ('0.0.0.0', 2121)  # 监听所有网络接口的2121端口
     server = FTPServer(address, handler)
 
